@@ -12,7 +12,7 @@
 #   docker build -t ghcr.io/everclaw/everclaw:latest .
 #
 # Build with specific OpenClaw version:
-#   docker build --build-arg OPENCLAW_VERSION=v2026.4.15 -t ghcr.io/everclaw/everclaw:latest .
+#   docker build --build-arg OPENCLAW_VERSION=v2026.5.7 -t ghcr.io/everclaw/everclaw:latest .
 #
 # Run:
 #   docker run -d \
@@ -44,7 +44,7 @@
 # Pin OpenClaw version for reproducible builds.
 # Update this when upgrading to a new release.
 
-ARG OPENCLAW_VERSION=v2026.4.15
+ARG OPENCLAW_VERSION=v2026.5.7
 
 FROM node:22-bookworm AS openclaw-builder
 
@@ -62,8 +62,8 @@ WORKDIR /openclaw
 RUN git clone --depth 1 --branch ${OPENCLAW_VERSION} https://github.com/openclaw/openclaw.git . && \
     rm -rf .git
 
-# Copy EverClaw skill into build context
-COPY --chown=node:node . /everclaw-skill
+# Copy EverClaw core skill into build context (monorepo: packages/core/ is the skill)
+COPY --chown=node:node packages/core /everclaw-skill
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -121,7 +121,12 @@ RUN cd /app && npm install node-llama-cpp@3.18.1 --no-save 2>&1 || true
 # Copy EverClaw skill into the workspace
 COPY --from=openclaw-builder --chown=node:node /everclaw-skill /home/node/.openclaw/workspace/skills/everclaw
 
-# Install EverClaw dependencies (x402, viem for finance tracker)
+# Copy flavor overlays into the skill directory (monorepo: flavors/ is at repo root)
+COPY --chown=node:node flavors /home/node/.openclaw/workspace/skills/everclaw/flavors
+
+# Install EverClaw runtime dependencies in the OpenClaw workspace.
+# These are also declared in root package.json for CI testing, but Docker
+# installs them here because the skill runs inside OpenClaw's workspace.
 WORKDIR /home/node/.openclaw/workspace
 RUN npm init -y 2>/dev/null; \
     npm install --omit=dev @x402/fetch @x402/evm viem argon2 2>/dev/null || true
@@ -135,17 +140,17 @@ WORKDIR /app
 # the config file does not already exist.
 RUN mkdir -p /opt/everclaw/defaults
 
-COPY config/openclaw-default.json /opt/everclaw/defaults/openclaw-default.json
+COPY packages/core/config/openclaw-default.json /opt/everclaw/defaults/openclaw-default.json
 RUN chown node:node /opt/everclaw/defaults/openclaw-default.json
 
 # ─── Boot File Templates ─────────────────────────────────────────────────────
 # Copy boot templates to workspace if they don't already exist (first run)
 
-COPY --chown=node:node scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY --chown=node:node packages/core/scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
 # ─── Flavor Overlay ───────────────────────────────────────────────────────────
-# Build with --build-arg FLAVOR=morpheus-agent (or any flavor in templates/flavors/)
+# Build with --build-arg FLAVOR=morpheusclaw.com (or any flavor dir in flavors/)
 # to bake flavor-specific files into the image at build time.
 # Flavor .md files are FINAL content (no __PLACEHOLDER__ vars) — copied directly
 # to the workspace, bypassing the template system. The entrypoint's scaffold step
@@ -154,7 +159,7 @@ RUN chmod +x /app/docker-entrypoint.sh
 # If no flavor config exists, the generic default is preserved.
 
 ARG FLAVOR=
-RUN FDIR="/home/node/.openclaw/workspace/skills/everclaw/templates/flavors/${FLAVOR}"; \
+RUN FDIR="/home/node/.openclaw/workspace/skills/everclaw/flavors/${FLAVOR}"; \
     if [ -n "${FLAVOR}" ] && [ -d "${FDIR}" ]; then \
       # Copy flavor .md files directly to workspace (final content, not templates) \
       for f in "${FDIR}"/*.md; do \
@@ -177,7 +182,7 @@ RUN FDIR="/home/node/.openclaw/workspace/skills/everclaw/templates/flavors/${FLA
 
 # ─── Environment ──────────────────────────────────────────────────────────────
 
-ARG EVERCLAW_VERSION=2026.4.19.0439
+ARG EVERCLAW_VERSION=2026.4.25.1719
 ENV EVERCLAW_VERSION=${EVERCLAW_VERSION}
 ENV NODE_ENV=production
 ENV EVERCLAW_PROXY_PORT=8083

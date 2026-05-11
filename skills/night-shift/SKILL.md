@@ -1,3 +1,8 @@
+---
+name: night-shift
+description: "Automated overnight task planning and execution engine for EverClaw. Generates prioritized action lists at 9:30 PM CST for the 10 PM–6 AM window, requires human approval before execution, enforces safety boundaries on allowed task types, and updates Mission Control dashboard at shift end. Use when planning overnight autonomous work, configuring night shift cron jobs, reviewing morning progress reports, or setting task approval policies."
+---
+
 # Night Shift Skill
 
 **Purpose:** Generate actionable overnight tasks based on the day's projects and objectives.
@@ -20,8 +25,8 @@ The night shift action list should include:
 - Prep for the next day
 
 ### 3. Human Review (Before 10 PM)
-- List is presented to David for approval
-- David can approve, modify, or reject tasks
+- List is presented to the user for approval
+- User can approve, modify, or reject tasks
 - Only approved tasks are executed during night shift
 
 ---
@@ -51,7 +56,7 @@ The night shift action list should include:
 ```bash
 # Night Shift Planning Cron
 # Runs every night at 9:30 PM CST
-# Generates action list for David to review before 10 PM
+# Generates action list for the user to review before 10 PM
 ```
 
 ---
@@ -144,16 +149,16 @@ openclaw cron add --name "Night Shift Planning" --schedule "30 21 * * *" --messa
    - Updated goal progress
    - Activity feed with night shift actions
 
-4. David can review the dashboard at `file://~/.openclaw/workspace/mission-control/index.html`
+4. The user can review the dashboard at `file://~/.openclaw/workspace/mission-control/index.html`
 
-This gives David a rich UI view of overnight progress in addition to the Signal summary.
+This gives the user a rich UI view of overnight progress in addition to the Signal summary.
 
 ---
 
 ## Notes
 
-- Night shift is optional — David must approve before execution
+- Night shift is optional — the user must approve before execution
 - Tasks that require external communication are never automated
 - All night shift actions are logged and reported in the morning
-- If David doesn't respond by 10 PM, night shift is cancelled by default
+- If the user doesn't respond by 10 PM, night shift is cancelled by default
 - Mission Control dashboard is updated at end of night shift (6 AM)

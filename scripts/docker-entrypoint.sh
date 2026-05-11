@@ -19,6 +19,7 @@ DEFAULT_CONFIG="/opt/everclaw/defaults/openclaw-default.json"
 
 GATEWAY_PID=""
 PROXY_PID=""
+FIRST_RUN_MARKER="${OPENCLAW_HOME}/.first-run-complete"
 
 # ─── First Run: Scaffold workspace ──────────────────────────────────────────
 
@@ -399,6 +400,47 @@ else
   echo "ℹ️  Security tier script not found — using config defaults"
 fi
 
+# ─── Bonjour/mDNS Mitigation (OpenClaw v2026.4.24) ──────────────────────────
+# OpenClaw v2026.4.24 ships a broken bonjour (mDNS/CIAO) plugin that throws
+# unhandled promise rejections on macOS and headless Linux (Docker/VPS).
+# This crashes WebSocket connections with ECONNRESET → 1006.
+# Ref: https://github.com/openclaw/openclaw/issues/70232
+#
+# Mitigation: disable the bonjour plugin + clean corrupted plugin-runtime-deps
+# before the gateway starts. This is safe — bonjour is only used for local
+# network discovery and is not required for any inference or messaging.
+
+echo "🔧 Applying Bonjour/mDNS mitigation (OpenClaw v2026.4.24)..."
+
+# 1. Disable the bonjour plugin via config (prevents the crash entirely)
+if jq . "$CONFIG_FILE" > /dev/null 2>&1; then
+  BONJOUR_DISABLED=$(jq -r '.gateway.plugins.bonjour.enabled // "notset"' "$CONFIG_FILE" 2>/dev/null)
+  if [ "$BONJOUR_DISABLED" != "false" ]; then
+    TMP_CONFIG=$(mktemp)
+    if jq '.gateway.plugins.bonjour.enabled = false' "$CONFIG_FILE" > "$TMP_CONFIG" 2>/dev/null; then
+      mv "$TMP_CONFIG" "$CONFIG_FILE"
+      echo "   ✅ Bonjour plugin disabled in config"
+    else
+      rm -f "$TMP_CONFIG"
+      echo "   ⚠️  Could not disable bonjour via config — gateway may still crash"
+    fi
+  else
+    echo "   ✅ Bonjour plugin already disabled"
+  fi
+fi
+
+# 2. Clean corrupted plugin-runtime-deps (ENOTEMPTY fix)
+#    The v2026.4.24 installer sometimes leaves a half-written plugin-sdk folder
+#    that causes repeated ENOTEMPTY errors on startup.
+PLUGIN_DEPS_DIR="${OPENCLAW_HOME}/plugin-runtime-deps"
+if [ -d "$PLUGIN_DEPS_DIR" ]; then
+  CORRUPTED=$(find "$PLUGIN_DEPS_DIR" -maxdepth 1 -name 'openclaw-2026.4.24*' -type d 2>/dev/null | head -1)
+  if [ -n "$CORRUPTED" ]; then
+    rm -rf "$CORRUPTED"
+    echo "   ✅ Cleaned corrupted plugin-runtime-deps"
+  fi
+fi
+
 # ─── Start Morpheus Proxy (background, only if configured) ──────────────────
 
 # Trap signals to clean up all children on exit
@@ -476,8 +518,32 @@ if [ "$GATEWAY_HEALTHY" = "true" ]; then
   echo "╚══════════════════════════════════════════════════════════════════╝"
   echo ""
   echo "💡 Bookmark the Dashboard URL — it includes your auth token."
-  echo "⚠️  For local use only. Do not expose to the internet without"
-  echo "   additional authentication (reverse proxy, VPN, etc)."
+  echo ""
+
+  # First-run security guidance banner (shown once, suppressed by sentinel file)
+  if [ ! -f "$FIRST_RUN_MARKER" ]; then
+    GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
+    cat <<EOF
+╔══════════════════════════════════════════════════════════════════╗
+║  🔒 Security: Best Practices                                    ║
+║                                                                 ║
+║  For best security, access via http://localhost:${GATEWAY_PORT}
+║  LAN access (e.g. http://192.168.x.x:${GATEWAY_PORT}) works but
+║  is less secure — device auth requires HTTPS or localhost.
+║                                                                 ║
+║  For remote access, set up an HTTPS reverse proxy:              ║
+║    • Caddy, Traefik, or Nginx with Let's Encrypt               ║
+║    • SSH tunnel: ssh -NL ${GATEWAY_PORT}:127.0.0.1:${GATEWAY_PORT} user@host
+║                                                                 ║
+║  Docs: https://docs.openclaw.ai/gateway/security               ║
+╚══════════════════════════════════════════════════════════════════╝
+EOF
+    if ! touch "$FIRST_RUN_MARKER" 2>/dev/null; then
+      echo "⚠️  Could not create first-run marker — this banner may reappear" >&2
+    fi
+  fi
+  echo "⚠️  Do not expose to the internet without additional authentication"
+  echo "   (reverse proxy, VPN, etc)."
   echo ""
 elif [ "$GATEWAY_ALIVE" = "false" ]; then
   echo ""

@@ -2,6 +2,323 @@
 
 All notable changes to EverClaw are documented here.
 
+## [2026.5.11.1938] - 2026-05-11
+
+### Changed — OpenClaw Pin v2026.4.29 → v2026.5.7
+
+- **Dockerfile:** OpenClaw build target updated to `v2026.5.7`
+- **docker-compose.yml:** Image tag and build arg updated
+
+### Upstream Highlights (OpenClaw v2026.4.29 → v2026.5.7)
+
+#### New Features
+- **xAI/Grok 4.3** — Default xAI chat model with image generation, TTS, STT
+- **OpenAI Chat-Latest** — Support for chat-latest model aliases
+- **Google Meet/Voice Call** — Twilio dial-in improvements, realtime Gemini voice bridge
+- **Local Service Startup** — On-demand local model servers before OpenAI-compatible requests
+- **Plugin SDK Session Actions** — scheduleSessionTurn, sendSessionAttachment
+- **Discord Voice** — Realtime voice diagnostics, allowedChannels config
+- **Slack Enhancements** — unfurlLinks/unfurlMedia config, replyBroadcast, App Home tab
+- **WhatsApp Channel/Newsletter** — Explicit @newsletter outbound targets
+- **Context Map** — `/context map` command for session context treemap visualization
+- **Git Plugin Installs** — First-class `git:` plugin installs with ref checkout
+
+#### Fixes
+- **WhatsApp** — libsignal-node dependency fix
+- **Gateway/systemd** — Secrets preservation across restarts
+- **Feishu** — Thread ID hydration fix
+- **LINE** — dmPolicy validation fix
+- **Doctor/OpenAI Codex** — OAuth route revert fix
+- **Release/Plugin Publishing** — Publishing fixes for npm-first cutover
+- **Cron CLI** — Improvements for job management
+- **Gateway Startup** — Leaner hot paths, scoped plugin preloads
+- **Control UI/WebChat** — Sessions, Cron, long-running WebSocket resilience
+- **Messaging** — Telegram topic commands, Discord delivery edge cases, Signal group/media routing
+- **Provider Fixes** — OpenAI-compatible TTS/Realtime, OpenRouter/DeepSeek replay, Anthropic streaming
+
+#### Infrastructure
+- **pnpm 11** — Workspace upgrade
+- **Plugin Registry** — npm-first cutover, ClawPack metadata, cold registry improvements
+- **Dependencies** — TypeBox 1.1.37, AWS SDK 3.1041.0, OpenAI 6.35.0, Codex 0.128.0, Zod 4.4.1
+
+(Reference: https://github.com/openclaw/openclaw/releases)
+
+## [2026.4.30.2333] - 2026-04-30
+
+### Changed — OpenClaw Pin v2026.4.26 → v2026.4.29
+
+- **Dockerfile:** OpenClaw build target updated from `v2026.4.26` to `v2026.4.29`
+- **docker-compose.yml:** Image tag and build arg updated
+
+### Upstream Highlights (OpenClaw v2026.4.26 → v2026.4.29)
+
+#### New Features
+- **NVIDIA provider:** API-key onboarding, static model catalog, literal model-ref picker
+- **Commitments system:** Opt-in inferred follow-up commitments with hidden batched extraction, per-agent/per-channel scoping, heartbeat delivery, CLI management, `commitments.enabled`/`commitments.maxPerDay` config
+- **Memory wiki:** People metadata, provenance views, relationship graphs, per-conversation Active Memory filters, partial recall on timeout, bounded REM preview diagnostics
+- **Active-run steering:** Default active-run queueing to steer with 500ms debounce fallback, dedicated steering queue docs
+- **Spawned subagent routing:** Subagent metadata propagated for visible-reply enforcement
+
+#### Fixes
+- **Tool profile safety:** Configured tool sections (tools.exec, tools.fs) no longer implicitly widen restrictive profiles; startup warning identifies affected configs
+- **Stale-session recovery:** Orphan recovery bounded with persisted attempts and wedged-session tombstone; task doctor reconciles automatically
+- **Browser config refresh:** CLI status/start honors configured executablePath, headless, and noSandbox instead of stale auto-detection
+- **systemd exit codes:** Exit 78 for lock/EADDRINUSE conflicts stops Restart=always loops
+- **Telegram group fix:** Blank visible user prompts skipped at embedded-runner boundary (no more raw empty-input provider errors)
+- **Discord/Slack fallback:** Auto-reply falls back to automatic source delivery when message tool unavailable
+- **Codex streams:** Existing wrapped Codex streams preserved during OpenAI attribution; unsupported Codex-only fields stripped without touching custom endpoints
+- **Token budget:** Tool-result overflow uses resolved runtime context token budget (no more early compaction)
+
+#### Security
+- **OpenGrep scanning:** Precise rulepack, source-rule compiler, provenance metadata check, PR/full scan workflows with SARIF upload to GitHub Code Scanning
+- **GHSA triage refinement:** Media/base64 decode overhead classified as performance-only unless demonstrating limit bypass, crash, exhaustion, or data exposure
+- **Web-fetch IPv6:** ULA opt-in for trusted proxy stacks
+
+#### Channels
+- **Slack:** Block Kit section limits enforced
+- **Telegram:** Proxy/webhook/polling/send resilience improvements
+- **Discord:** Startup and rate-limit handling fixes
+- **WhatsApp:** Delivery and liveness improvements
+- **Teams/Matrix/Feishu:** Edge case fixes
+
+#### Performance
+- Reusable model catalogs, event-loop readiness diagnostics, runtime-dependency repair, version-scoped update caches
+
+(Reference: https://github.com/openclaw/openclaw/releases/tag/v2026.4.29)
+
+## [2026.4.28.1255] - 2026-04-28
+
+### Fixed — Monorepo Path Resolution (Regression from v2026.4.22)
+
+The April 22 monorepo restructure moved all runtime scripts from `scripts/` to `packages/core/scripts/`, but installer scripts, documentation, and diagnostics still referenced the old paths. This caused:
+
+- **404 errors** on `curl | bash` install URLs documented in SKILL.md
+- **"file not found" errors** for setup.mjs, setup-ollama.sh, install.sh, bootstrap-everclaw.mjs during installation
+- **Broken fix suggestions** in diagnose.sh
+
+#### Changes
+
+- **install-with-deps.sh:** Added `SCRIPTS_DIR` auto-detection for monorepo vs composed flavor layouts; all `scripts/` references now use resolved paths
+- **install-everclaw.sh:** Same `SCRIPTS_DIR` resolution after clone/update
+- **diagnose.sh:** Updated all `fix` suggestions to use `$SCRIPT_DIR` (resolves to script's containing directory)
+- **SKILL.md:** Fixed curl URLs from `scripts/` to `packages/core/scripts/`
+
+#### Testing
+
+- Verified corrected URLs return HTTP 200 from GitHub raw CDN
+- Bash syntax check passed on all modified scripts
+- SCRIPTS_DIR resolution verified for both monorepo and composed flavor structures
+- Pre-existing test failures (mempalace-bridge, security-tier) unchanged
+
+## [2026.4.28.0352] - 2026-04-28
+
+### Changed — OpenClaw Pin v2026.4.25 → v2026.4.26
+
+- **Dockerfile:** OpenClaw build target updated from `v2026.4.25` to `v2026.4.26`
+- **docker-compose.yml:** Image tag and build arg updated
+
+### Upstream Highlights (OpenClaw v2026.4.25 → v2026.4.26)
+
+#### New Features
+- **Cerebras provider:** Bundled plugin with onboarding, static model catalog, and manifest-owned endpoint metadata
+- **Asymmetric embeddings:** `memorySearch.inputType`, `queryInputType`, `documentInputType` config for smarter memory search with asymmetric embedding endpoints
+- **Ollama query prefixes:** Model-specific retrieval prefixes for nomic-embed-text, qwen3-embedding, and mxbai-embed-large
+- **Transcript compaction preflight:** Opt-in `maxActiveTranscriptBytes` auto-compacts when JSONL grows too large
+- **Claude + Hermes importers:** `openclaw migrate` with plan, dry-run, JSON output, and pre-migration backup
+- **Matrix E2EE:** One-command Matrix encryption setup with bootstrap recovery
+- **Config diff panel:** Control UI shows pending config changes with JSON5 parsing and sensitive value redaction
+- **Google Live Talk:** Browser realtime transport with constrained ephemeral tokens and Gateway relay
+- **Plugin layered deps:** `OPENCLAW_PLUGIN_STAGE_DIR` supports read-only preinstalled deps before writable root
+
+#### Fixes (30+ Ollama fixes)
+- Custom provider prefix stripping, native thinking effort levels, VRAM/context defaults, auth scoping, vision modality preservation, web search routing, timeout/keepalive threading, embedding endpoint migration, duplicate model ID prevention, and more
+- **EPIPE crash guard:** Broken-pipe stream errors no longer crash the Gateway
+- **Bonjour hardening:** Cancellation handlers preserved across advertiser restarts
+- **Cron isolation:** Isolated cron jobs get run-scoped context keys (no prior-run bleed)
+- **sessions_spawn aliases:** Bare model aliases now resolve correctly for subagent overrides
+- **npm update safety:** Updates use temp prefix before swapping package tree
+- **Link understanding:** URL-bearing messages no longer dropped after stale runtime chunk upgrades
+- **Docker CA certs:** Slim runtime image now includes CA certificate bundle for HTTPS
+- **Chokidar v5 hot reloads:** Skill and memory file watching restored
+
+#### Security
+- Device token echo fix (rotated tokens no longer leaked in shared/admin responses)
+- Transcript redaction patterns now applied to persisted JSONL
+- Exec approvals accept symlinked `OPENCLAW_HOME` while rejecting symlinked path components below it
+
+(Reference: https://github.com/openclaw/openclaw/releases/tag/v2026.4.26)
+
+## [2026.4.28.0145] - 2026-04-28
+
+### Changed — OpenClaw Pin v2026.4.23 → v2026.4.25
+
+- **Dockerfile:** OpenClaw build target updated from `v2026.4.23` to `v2026.4.25`
+- **docker-compose.yml:** Image tag and build arg updated
+
+### Upstream Highlights (OpenClaw v2026.4.23 → v2026.4.25)
+
+#### New Features
+- **TTS overhaul:** `/tts latest` read-aloud, `/tts chat on|off` session-scoped auto-TTS, per-agent voice overrides, 6 new TTS providers (Azure Speech, Xiaomi, Local CLI, Inworld, Volcengine, ElevenLabs v3)
+- **Plugin cold registry:** Persisted registry eliminates broad manifest scans, faster boot, deterministic provider discovery
+- **OpenTelemetry expansion:** Spans across model calls, token usage, tool loops, harness runs, exec, delivery, context assembly, memory pressure; Prometheus scrape plugin; W3C traceparent propagation
+- **Browser automation:** Iframe-aware role snapshots, safe tab URLs, CDP readiness tuning for slow hosts, headless one-shot launch, `doctor --deep` probing
+- **Control UI:** PWA install + Web Push notifications, Crestodian TUI first-run setup, context mode selector
+- **Google Meet:** Calendar-backed attendance export workflows, meeting record tools
+
+#### Fixes
+- **DeepSeek V4:** Venice passthrough fix for `reasoning_content` replay turns (eliminates need for local patch)
+- **Cron hardening:** Jobs interrupted by restart recorded as failed, one-shots disabled after interruption
+- **Install hardening:** Windows/macOS/Linux/Docker improvements, Node service restarts, LaunchAgent token rotation, mixed-version gateway verification
+- **Bonjour/mDNS:** Broken plugin self-disables after repeated failures (EverClaw also auto-disables preemptively)
+
+#### Security
+- Device token scope containment (pairing-only sessions can't mutate operator tokens)
+- Configured redaction patterns now applied to persisted session transcripts
+- Gateway rejects older binary from mutating newer-version services
+
+(References: https://github.com/openclaw/openclaw/releases/tag/v2026.4.24, https://github.com/openclaw/openclaw/releases/tag/v2026.4.25)
+
+## [2026.4.25.1719] - 2026-04-25
+
+### Added — BACK-006: First-Run Security Guidance Banner
+
+- **Feature:** Docker containers now show a one-time security guidance banner on first startup, recommending localhost access and explaining HTTPS reverse proxy options (Caddy, Traefik, Nginx, SSH tunnel).
+- **Sentinel:** Banner is suppressed on subsequent starts via `~/.openclaw/.first-run-complete` marker file. If the marker cannot be created (read-only volume), a warning is logged and the banner reappears.
+- **Port-aware:** Banner uses `OPENCLAW_GATEWAY_PORT` env var (default 18789) for all URLs and SSH tunnel examples.
+- **Files:** `packages/core/scripts/docker-entrypoint.sh` (+27/-2)
+- **SOP-001:** Stages 0-7 complete. Grok 4.20: 2 rounds → Perfect. Cross-model (Claude Opus 4.6): Perfect. PII scan: clean.
+
+## [2026.4.25.0441] - 2026-04-25
+
+### Fixed — BACK-015: install-with-deps.sh False-Positive Dependency Reporting
+
+- **Bug:** `verify_installed()` return values were discarded in `install_dep()` for `curl`, `git`, `npm`, and `OpenClaw` cases. The function could return 0 (success) even when dependency installation failed, causing confusing output where users saw checkmarks but dependencies were missing.
+- **Fix:** All `verify_installed` calls now propagate their return values via `|| return 1`:
+  - `curl`: added `|| return 1` after verify call
+  - `git` (macOS with brew): moved verify inside brew branch with `|| return 1`
+  - `git` (macOS without brew): changed to `log_err` + `return 1` (was `log_warn` only)
+  - `git` (Linux): moved verify inside Linux branch with `|| return 1`
+  - `npm`: restructured as early-return-on-success, install path with `|| return 1`
+  - `OpenClaw`: added `|| return 1` after verify call
+- **Files:** `packages/core/scripts/install-with-deps.sh` (17 insertions, 14 deletions)
+- **SOP-001:** Stages 0-7 complete. Grok 4.20: Perfect. Cross-model (DeepSeek V4 Pro): Perfect.
+
+## [2026.4.25.0259] - 2026-04-25
+
+### Fixed — Monorepo Path Issues
+
+- **npm test now works from monorepo root:** Added symlink `tests -> packages/core/tests` so the test glob in package.json finds tests in the monorepo. Previously `npm test` found 0 tests because `tests/` only existed in `packages/core/`.
+- **version-stamp.sh finds package.json in monorepo:** Added monorepo detection that looks for package.json at the repo root (two levels up from REPO_DIR) when running from packages/core/. Previously the script could only find 3/4 files (SKILL.md, Dockerfile, docker-compose.yml in packages/core/) but missed package.json at repo root.
+
+**Note:** users running macOS should run `git config core.symlinks true` to ensure the symlink works correctly on checkout. Windows users should enable Developer Mode for symlink support.
+
+## [2026.4.25.0136] - 2026-04-25
+
+### Fixed — Monorepo Bootstrap Wrapper
+
+- **Added wrapper** at `scripts/bootstrap-gateway.mjs` that forwards to `packages/core/scripts/bootstrap-gateway.mjs`
+- **Issue:** Users cloning the monorepo (`EverClaw/EverClaw`) got `MODULE_NOT_FOUND` when running `npm run bootstrap` because the actual script lives in `packages/core/scripts/`
+- **Fix:** Thin ESM wrapper at monorepo root forwards CLI args to the real script in `packages/core/`
+- **Composed flavor repos unaffected:** `flavor-compose.sh` copies `packages/core/scripts/` to output root (not monorepo root `scripts/`), so flavor installs already had the real script
+
+## [2026.4.24.1832] - 2026-04-24
+
+### Changed — OpenClaw Pin v2026.4.21 → v2026.4.23
+
+- **Dockerfile:** OpenClaw build target updated to `v2026.4.23`
+- **docker-compose.yml:** Image tag and build arg updated
+
+### Upstream Highlights (OpenClaw v2026.4.21 → v2026.4.23)
+
+#### New Features
+- **Image Generation:** gpt-image-2 via Codex OAuth (no API key needed), OpenRouter image models, quality/format hints
+- **Subagents:** Optional forked context for `sessions_spawn` — child inherits parent transcript
+- **Tools:** Per-call `timeoutMs` for image, video, music, and TTS generation
+- **Memory:** Configurable `memorySearch.local.contextSize` (4096 default) for constrained hosts
+- **Dependencies:** Pi packages updated to 0.70.0
+- **Codex Harness:** Structured debug logging for harness selection decisions
+
+#### Fixes
+- **Block Streaming:** Suppress duplicate replies after partial block-delivery aborts
+- **Slack:** Classify MPIM group DMs as group chat, suppress verbose tool progress in rooms
+- **Telegram:** Parse markdown image syntax into outbound media payloads
+- **WhatsApp:** Unified outbound media normalization across sends and auto-replies
+- **WebChat:** Surface non-retryable provider failures (billing, auth, rate-limit) with model-switch hints
+- **Memory CLI:** Local embedding provider resolution for standalone commands
+- **Codex/Windows:** Resolve npm-installed codex.cmd shims through PATHEXT
+- **Media Understanding:** Honor explicit imageModel config before native-vision skips
+- **Image Attachments:** Preserve for text-only models via media ref offloading
+
+#### Security
+- **Teams:** Cross-bot token replay blocked via verified appid/azp
+- **Android:** Loopback-only cleartext gateway connections required
+- **Pairing:** Private-IP or loopback required for cleartext mobile pairing
+- **QA Channel:** Non-HTTP(S) inbound attachment URLs rejected
+- **Claude CLI:** `bypassPermissions` derived from OpenClaw exec policy
+- **Plugins:** Setup-api lookup hardening
+
+(Reference: https://github.com/openclaw/openclaw/releases/tag/v2026.4.23)
+
+
+## [2026.4.22.1820] - 2026-04-22
+
+### Changed — Skill Frontmatter & Cleanup
+
+Cherry-picked improvements from community PR #15 (yogesh-tessl):
+
+- **Added YAML frontmatter** to 5 skills: `agent-chat`, `night-shift`, `pii-guard`, `prompt-guard`, `xmtp-comms-guard`
+  - Structured `name` and `description` with `Use when` clauses for agent discovery
+  - Consistent double-quoted string format across all skills
+  - EverClaw branding standardized across all descriptions
+- **Removed duplicate section** from `agent-chat/SKILL.md`: second "Daemon Management" block (88 lines) was identical to the first
+- **Preserved all security content** in `prompt-guard/SKILL.md`: inline detection patterns, changelogs, and incident context retained (rejected PR's removal of these)
+
+
+## [2026.4.22.1638] - 2026-04-22
+
+### Changed — Monorepo Restructure
+
+**Architecture overhaul:** Reorganized flat repo into monorepo with composed flavor deployment.
+
+- **New `packages/core/`:** All common Morpheus infrastructure (scripts, tests, references, docs, templates, Docker, config)
+- **New `flavors/`:** 29 thin per-flavor directories with `flavor.json` + `README.md` + optional templates
+- **New `scripts/flavor-compose.sh`:** Composes core + flavor overlay into a deployable repo
+- **Rewritten `scripts/ecosystem-sync.sh`:** Canonical remotes get full monorepo; flavor remotes get composed artifacts
+- **New `archive/`:** Deprecated content (alternative installers, marketing, analytics, one-time tools)
+- **Removed `claw-repos/`:** Per-flavor duplicated directories eliminated (was 28 × full copy)
+- **Moved `everclaw-docker/` and `everclaw-key-api/`:** Now under `packages/core/` for automatic inclusion in composed flavors
+- All flavor READMEs note they are generated from the monorepo
+- Root README updated with monorepo architecture, "Adding a New Flavor" guide
+- Uses `rsync` for robust core copying (new files auto-included), `jq` for JSON parsing
+
+## [2026.4.22.1314] - 2026-04-22
+
+### Changed — OpenClaw Pin v2026.4.15 → v2026.4.21
+
+- **Dockerfile:** OpenClaw build target updated to `v2026.4.21`
+- **docker-compose.yml:** Image tag and build arg updated
+
+### Upstream Highlights (OpenClaw v2026.4.15 → v2026.4.21)
+
+#### New Features
+- **Image generation:** Defaults to `gpt-image-2` (OpenAI)
+- **Skill Workshop plugin:** Captures workflow corrections as reusable skills
+- **Kimi K2.6:** Added to Fireworks provider catalog
+- **Preview streaming:** Discord, Slack, Telegram show tool progress in live edits
+- **QQBot:** Self-contained engine with QR-code onboarding
+
+#### Performance
+- **Plugin startup:** Discord 98% faster, Telegram 14s faster, Matrix 1.8s faster
+- **Bundled plugin loading:** 82-90% faster via native Jiti
+
+#### Fixes
+- **ACP/subagents:** Parent→child echo loop fix on `sessions_send`
+- **Subagents:** Terminal failures no longer freeze or replay stale output
+- **Security:** External content strips chat-template special tokens (Qwen/ChatML, Llama, Gemma, Mistral)
+- **npm:** Fixed `node-domexception` deprecation warning chain
+
+(Reference: https://github.com/openclaw/openclaw/releases/tag/v2026.4.21)
+
 ## [2026.4.19.0439] - 2026-04-19
 
 ### Added — Per-Agent Inference Quota Management

@@ -48,7 +48,7 @@ DISK_FREE_MB=0
 GPU_TYPE="none"
 
 # Dependency tracking
-MISSING_DEPS=""
+MISSING_DEPS=()
 MISSING_COUNT=0
 
 # ─── Parse Arguments ─────────────────────────────────────────────
@@ -351,7 +351,7 @@ check_dep() {
     return 0
   else
     log_err "${name} ${YELLOW}(missing)${NC}"
-    MISSING_DEPS="${MISSING_DEPS} ${name}"
+    MISSING_DEPS+=("$name")
     MISSING_COUNT=$((MISSING_COUNT + 1))
     return 1
   fi
@@ -418,16 +418,18 @@ install_dep() {
         pacman) sudo pacman -S --noconfirm curl ;;
         *)      log_warn "Cannot auto-install curl on this system"; return 1 ;;
       esac
-      verify_installed "curl" "curl"
+      verify_installed "curl" "curl" || return 1
       ;;
 
     git)
       if [[ "$OS" == "Darwin" ]]; then
         if [[ -n "$BREW_CMD" ]]; then
           "$BREW_CMD" install git 2>&1 | tail -3
+          verify_installed "git" "git" || return 1
         else
-          log_warn "Git install skipped (no Homebrew on this Mac)"
+          log_err "Git install skipped (no Homebrew on this Mac)"
           log "  Install Xcode Command Line Tools: xcode-select --install"
+          return 1
         fi
       else
         case "$PACKAGE_MANAGER" in
@@ -437,8 +439,8 @@ install_dep() {
           pacman) sudo pacman -S --noconfirm git ;;
           *)      log_warn "Cannot auto-install git on this system"; return 1 ;;
         esac
+        verify_installed "git" "git" || return 1
       fi
-      verify_installed "git" "git"
       ;;
 
     "Node.js")
@@ -473,23 +475,24 @@ install_dep() {
 
     npm)
       # npm comes with Node.js — just verify
-      if ! verify_installed "npm" "npm" 2>/dev/null; then
-        # On Linux, npm might need separate install
-        case "$PACKAGE_MANAGER" in
-          apt)    sudo apt-get install -y -qq npm ;;
-          dnf)    sudo dnf install -y -q npm ;;
-          yum)    sudo yum install -y -q npm ;;
-          pacman) sudo pacman -S --noconfirm npm ;;
-          *)      log_warn "Cannot auto-install npm on this system"; return 1 ;;
-        esac
-        verify_installed "npm" "npm"
+      if verify_installed "npm" "npm" 2>/dev/null; then
+        return 0
       fi
+      # On Linux, npm might need separate install
+      case "$PACKAGE_MANAGER" in
+        apt)    sudo apt-get install -y -qq npm ;;
+        dnf)    sudo dnf install -y -q npm ;;
+        yum)    sudo yum install -y -q npm ;;
+        pacman) sudo pacman -S --noconfirm npm ;;
+        *)      log_warn "Cannot auto-install npm on this system"; return 1 ;;
+      esac
+      verify_installed "npm" "npm" || return 1
       ;;
 
     OpenClaw)
       if command -v npm &>/dev/null; then
         npm install -g openclaw@latest 2>&1 | tail -3
-        verify_installed "OpenClaw" "openclaw"
+        verify_installed "OpenClaw" "openclaw" || return 1
       else
         log_err "npm not found — cannot install OpenClaw"
         return 1
@@ -511,7 +514,7 @@ if [[ $MISSING_COUNT -gt 0 ]]; then
     echo -e "${CYAN}Auto-installing ${MISSING_COUNT} missing dependencies...${NC}"
     echo ""
 
-    for dep in $MISSING_DEPS; do
+    for dep in "${MISSING_DEPS[@]}"; do
       install_dep "$dep" || {
         log_err "Failed to install ${dep}"
         echo ""
@@ -524,7 +527,7 @@ if [[ $MISSING_COUNT -gt 0 ]]; then
     # Re-verify
     echo ""
     echo -e "${BOLD}Verifying installation...${NC}"
-    MISSING_DEPS=""
+    MISSING_DEPS=()
     MISSING_COUNT=0
     if [[ "$OS" == "Darwin" ]]; then
       check_dep "Homebrew" "brew" || true
@@ -645,6 +648,14 @@ else
   log_ok "EverClaw installed"
 fi
 
+# Resolve scripts directory — supports both monorepo (packages/core/scripts/)
+# and composed flavor repos (scripts/ at root). Must run AFTER clone/update.
+if [[ -d "$INSTALL_DIR/packages/core/scripts" ]]; then
+  SCRIPTS_DIR="$INSTALL_DIR/packages/core/scripts"
+else
+  SCRIPTS_DIR="$INSTALL_DIR/scripts"
+fi
+
 echo ""
 
 # ─── Bootstrap API Key (Auto) ──────────────────────────────────────
@@ -659,12 +670,12 @@ if [[ -f "$HOME/.openclaw/.bootstrap-key" ]]; then
 else
   log "Getting your starter key for GLM-5 inference..."
 
-  if command -v node &>/dev/null && [[ -f "$INSTALL_DIR/scripts/bootstrap-everclaw.mjs" ]]; then
+  if command -v node &>/dev/null && [[ -f "$SCRIPTS_DIR/bootstrap-everclaw.mjs" ]]; then
     cd "$INSTALL_DIR"
-    node scripts/bootstrap-everclaw.mjs --setup 2>/dev/null || {
+    node "$SCRIPTS_DIR/bootstrap-everclaw.mjs" --setup 2>/dev/null || {
       log_warn "Could not reach EverClaw key server (not fatal)"
       log "  The agent will still work via local Ollama fallback."
-      log "  Run manually later: node scripts/bootstrap-everclaw.mjs --setup"
+      log "  Run manually later: node $SCRIPTS_DIR/bootstrap-everclaw.mjs --setup"
     }
   else
     log_warn "Node.js or bootstrap script not available — skipping key setup"
@@ -694,14 +705,14 @@ elif [[ "${DISK_FREE_MB:-0}" -ge 2048 ]]; then
   log "Auto-installing Morpheus proxy-router..."
   echo ""
 
-  if [[ -f "$INSTALL_DIR/scripts/install.sh" ]]; then
-    bash "$INSTALL_DIR/scripts/install.sh" && PROXY_INSTALLED=true || {
+  if [[ -f "$SCRIPTS_DIR/install.sh" ]]; then
+    bash "$SCRIPTS_DIR/install.sh" && PROXY_INSTALLED=true || {
       log_warn "Proxy-router install failed (not fatal)"
       log "  The API Gateway provides inference without it."
-      log "  Retry later: bash $INSTALL_DIR/scripts/install.sh"
+      log "  Retry later: bash $SCRIPTS_DIR/install.sh"
     }
   else
-    log_warn "install.sh not found at $INSTALL_DIR/scripts/install.sh"
+    log_warn "install.sh not found at $SCRIPTS_DIR/install.sh"
   fi
 else
   log "Disk: ${DISK_FREE_MB} MB free < 2048 MB threshold"
@@ -757,8 +768,8 @@ elif detect_ollama; then
   else
     log "Ollama installed but not yet configured in OpenClaw"
     log "Running setup-ollama.sh to configure..."
-    if [[ -f "$INSTALL_DIR/scripts/setup-ollama.sh" ]]; then
-      bash "$INSTALL_DIR/scripts/setup-ollama.sh" --apply 2>&1 | tail -20 || {
+    if [[ -f "$SCRIPTS_DIR/setup-ollama.sh" ]]; then
+      bash "$SCRIPTS_DIR/setup-ollama.sh" --apply 2>&1 | tail -20 || {
         log_warn "Ollama configuration failed (not fatal)"
       }
     fi
@@ -770,14 +781,14 @@ elif [[ "${DISK_FREE_MB:-0}" -ge 5120 && "${TOTAL_RAM_MB:-0}" -ge 2048 ]]; then
   log "Auto-installing Ollama local fallback..."
   echo ""
 
-  if [[ -f "$INSTALL_DIR/scripts/setup-ollama.sh" ]]; then
-    bash "$INSTALL_DIR/scripts/setup-ollama.sh" --apply 2>&1 | tail -30 && OLLAMA_INSTALLED=true || {
+  if [[ -f "$SCRIPTS_DIR/setup-ollama.sh" ]]; then
+    bash "$SCRIPTS_DIR/setup-ollama.sh" --apply 2>&1 | tail -30 && OLLAMA_INSTALLED=true || {
       log_warn "Ollama setup failed (not fatal)"
       log "  Cloud inference via Gateway + proxy-router still works."
-      log "  Retry later: bash $INSTALL_DIR/scripts/setup-ollama.sh --apply"
+      log "  Retry later: bash $SCRIPTS_DIR/setup-ollama.sh --apply"
     }
   else
-    log_warn "setup-ollama.sh not found at $INSTALL_DIR/scripts/"
+    log_warn "setup-ollama.sh not found at $SCRIPTS_DIR/"
   fi
 else
   disk_short=""
@@ -800,16 +811,16 @@ echo ""
 
 CONFIG_MERGED=false
 
-if command -v node &>/dev/null && [[ -f "$INSTALL_DIR/scripts/setup.mjs" ]]; then
+if command -v node &>/dev/null && [[ -f "$SCRIPTS_DIR/setup.mjs" ]]; then
   log "Merging Morpheus providers into OpenClaw config..."
   cd "$INSTALL_DIR"
-  node scripts/setup.mjs --apply --restart 2>&1 | tail -15 && CONFIG_MERGED=true || {
+  node "$SCRIPTS_DIR/setup.mjs" --apply --restart 2>&1 | tail -15 && CONFIG_MERGED=true || {
     log_warn "Config merge or gateway restart failed"
-    log "  Run manually: node $INSTALL_DIR/scripts/setup.mjs --apply --restart"
+    log "  Run manually: node $SCRIPTS_DIR/setup.mjs --apply --restart"
   }
 else
   log_warn "setup.mjs not found — skipping config merge"
-  log "  Run manually: node $INSTALL_DIR/scripts/setup.mjs --apply --restart"
+  log "  Run manually: node $SCRIPTS_DIR/setup.mjs --apply --restart"
 fi
 
 # ─── Ollama API Migration ─────────────────────────────────────────
@@ -910,26 +921,26 @@ echo ""
 if [[ "$CONFIG_MERGED" != true ]]; then
   echo -e "${BOLD}  Manual steps needed:${NC}"
   echo ""
-  log "1. Merge config:  node $INSTALL_DIR/scripts/setup.mjs --apply"
+  log "1. Merge config:  node $SCRIPTS_DIR/setup.mjs --apply"
   log "2. Restart:       openclaw gateway restart"
   echo ""
 fi
 
 # --- Optional: Agent-Chat XMTP Daemon ---
 AGENT_CHAT_SKILL="$INSTALL_DIR/skills/agent-chat"
-if [[ -d "$AGENT_CHAT_SKILL" ]] && [[ -f "$AGENT_CHAT_SKILL/daemon.mjs" ]] && [[ -f "$INSTALL_DIR/scripts/setup-agent-chat.sh" ]]; then
+if [[ -d "$AGENT_CHAT_SKILL" ]] && [[ -f "$AGENT_CHAT_SKILL/daemon.mjs" ]] && [[ -f "$SCRIPTS_DIR/setup-agent-chat.sh" ]]; then
   echo ""
   log "💬 Setting up agent-chat XMTP daemon..."
-  bash "$INSTALL_DIR/scripts/setup-agent-chat.sh" --skip-deps 2>&1 | tail -10 || {
+  bash "$SCRIPTS_DIR/setup-agent-chat.sh" --skip-deps 2>&1 | tail -10 || {
     log_warn "Agent-chat daemon setup had issues — not critical"
-    log "      Run manually: bash scripts/setup-agent-chat.sh"
+    log "      Run manually: bash $SCRIPTS_DIR/setup-agent-chat.sh"
   }
 fi
 
 echo -e "${BOLD}  Useful commands:${NC}"
 echo ""
-log "Test inference:   node $INSTALL_DIR/scripts/bootstrap-everclaw.mjs --test"
-log "Check status:     bash $INSTALL_DIR/scripts/diagnose.sh"
+log "Test inference:   node $SCRIPTS_DIR/bootstrap-everclaw.mjs --test"
+log "Check status:     bash $SCRIPTS_DIR/diagnose.sh"
 log "Get your own key: https://app.mor.org"
 
 echo ""
@@ -944,10 +955,10 @@ echo "     cd \"$INSTALL_DIR\""
 echo "     npm run bootstrap -- --key sk-XXXXXXXXXXXXXXXX"
 echo ""
 echo "  2. Absolute path (works from anywhere):"
-echo "     node \"$INSTALL_DIR/scripts/bootstrap-gateway.mjs\" --key sk-XXXXXXXXXXXXXXXX"
+echo "     node \"$SCRIPTS_DIR/bootstrap-gateway.mjs\" --key sk-XXXXXXXXXXXXXXXX"
 echo ""
 echo "  3. With environment variable (works from anywhere):"
-echo "     EVERCLAW_KEY=sk-XXXXXXXXXXXXXXXX node \"$INSTALL_DIR/scripts/bootstrap-gateway.mjs\""
+echo "     EVERCLAW_KEY=sk-XXXXXXXXXXXXXXXX node \"$SCRIPTS_DIR/bootstrap-gateway.mjs\""
 
 echo ""
 echo -e "${CYAN}  ♾️  Own your inference. Forever.${NC}"
