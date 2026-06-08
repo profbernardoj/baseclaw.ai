@@ -2,6 +2,39 @@
 
 All notable changes to EverClaw are documented here.
 
+## [2026.6.8.0050] - 2026-06-08
+
+### Central Inference Gateway (CIG) — Server-Side Key Management
+
+Removes the shared Morpheus API key from user containers. Inference is now routed through a server-side Central Inference Gateway that holds the master key and enforces per-user budgets.
+
+#### Added
+- **Auth-proxy CIG routing** — Intercepts `/v1/chat/completions` and `/v1/models` calls, routes through CIG with short-lived per-container tokens. TTL-aware cache with stampede prevention.
+- **CIG token minting (Service mode)** — Auth-proxy mints CIG tokens via `fqdn + binding_secret` without needing user Privy JWT on every request. Tokens cached with 80% TTL refresh.
+- **CIG inference gateway** — Server-side function that validates CIG tokens, enforces per-user budgets ($18/month), forwards to Morpheus, meters usage with CAS-protected updates.
+- **Per-user budget enforcement** — `user_budgets`, `usage_logs`, `model_prices` database tables. Auto-provision on first request. Monthly rollover.
+- **Binding secret per deployment** — Cryptographically random 32-byte secret generated per container, stored in `deployments` and `buffer_containers` tables.
+- **CIG_FAIL_CLOSED mode** — When `true`, returns 503 on mint failure instead of falling back to legacy key. Recommended for production.
+
+#### Security
+- **SSRF prevention** — CIG URL construction uses `new URL()` normalization
+- **Timeouts** — Mint fetch: 15s, inference fetch: 120s, verify-owner: 5s
+- **Response size limit** — 50 MiB cap on CIG streaming responses with `res.destroy()` on overflow
+- **Secret redaction** — Error logs filter `binding_secret` from response bodies
+- **FQDN required** — `CIG_CONTAINER_FQDN` mandatory when CIG enabled (no Host-header auto-detection)
+- **URL validation** — `CIG_MINT_URL` and `CIG_INFERENCE_URL` validated at startup
+
+#### Changed
+- **Dynamic ownership merged** — Buffer pool `VERIFY_OWNER_URL` + `VERIFY_OWNER_SECRET` now coexists with CIG integration. Three orthogonal auth modes: static owner, dynamic owner, CIG inference.
+- **Privy key loading** — Restored PEM-wrapping fallback for raw base64 key bodies (regression fix)
+
+#### Grok 4.20 Audit Trail
+- `mint-cig-token`: 94/100 Excellent (2 rounds)
+- `cig-inference`: 94/100 Excellent (2 rounds)
+- `auth-proxy` CIG: 93/100 Excellent (3 rounds)
+- `provision-buffer` + `deploy-agent`: 92/100 Excellent (2 rounds)
+- Final merged auth-proxy: Excellent, APPROVED (3 rounds, 8 blocking fixes applied)
+
 ## [2026.5.28.1854] - 2026-05-28
 
 ### OpenClaw Pin Bump v2026.5.22 → v2026.5.27
