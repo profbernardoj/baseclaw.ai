@@ -103,14 +103,11 @@ const MAX_BODY_BYTES = 16384; // 16 KB limit for POST bodies
 const CIG_CONFIG = {
   mintUrl: process.env.CIG_MINT_URL || '',
   bindingSecret: process.env.CIG_BINDING_SECRET || '',
-  containerFqdn: process.env.CIG_CONTAINER_FQDN || '',  // Auto-detected from Host header if empty
+  containerFqdn: process.env.CIG_CONTAINER_FQDN || '',  // Required when CIG enabled
   inferenceUrl: process.env.CIG_INFERENCE_URL || '',
 };
 
-// Track auto-detected FQDN (from first request's Host header)
-let detectedFqdn = '';
-
-const CIG_ENABLED = !!(CIG_CONFIG.mintUrl && CIG_CONFIG.bindingSecret && CIG_CONFIG.containerFqdn && CIG_CONFIG.inferenceUrl);
+const CIG_ENABLED = !!(CIG_CONFIG.mintUrl && CIG_CONFIG.bindingSecret && CIG_CONFIG.inferenceUrl);
 
 // When CIG_FAIL_CLOSED=true, if CIG token minting fails, return 503 instead
 // of falling back to the legacy in-container Morpheus key. Recommended for
@@ -129,18 +126,18 @@ let cigTokenCache = {
 const CIG_TOKEN_TTL_MS = 600_000;  // 10 min (must match mint-cig-token TOKEN_TTL_SECONDS)
 const CIG_REFRESH_MARGIN = 0.2;    // Refresh at 80% of TTL (2 min before expiry)
 
-// Get the container FQDN (from env or auto-detected from Host header)
+// Get the container FQDN (always from env — required when CIG is enabled)
 function getContainerFqdn() {
-  return CIG_CONFIG.containerFqdn || detectedFqdn;
+  return CIG_CONFIG.containerFqdn;
 }
 
 async function mintCigToken() {
   if (!CIG_ENABLED) return null;
 
-  // Need FQDN to mint — if not yet detected, return null (will be set on first request)
   const fqdn = getContainerFqdn();
   if (!fqdn) {
-    console.warn('[cig] Cannot mint token: FQDN not yet detected');
+    // This should never happen — CIG_CONTAINER_FQDN is required at startup
+    console.error('[cig] Cannot mint token: CIG_CONTAINER_FQDN is empty');
     return null;
   }
 
@@ -180,11 +177,14 @@ async function mintCigToken() {
         fqdn: getContainerFqdn(),
         binding_secret: CIG_CONFIG.bindingSecret,
       }),
+      signal: AbortSignal.timeout(15_000), // 15s timeout
     });
 
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      console.error(`[cig] Mint failed: HTTP ${resp.status} ${errText.slice(0, 200)}`);
+      // Redact error body if it might contain secrets
+      const safeErr = errText.includes('binding_secret') ? '[redacted]' : errText.slice(0, 200);
+      console.error(`[cig] Mint failed: HTTP ${resp.status} ${safeErr}`);
       return cigTokenCache.token && Date.now() < cigTokenCache.expiresAt
         ? cigTokenCache.token  // Return stale token if available
         : null;                // No token available
@@ -251,6 +251,11 @@ setInterval(() => {
 // ─── Startup Validation ──────────────────────────────────────────────────────
 
 function validateConfig() {
+  const required = [
+    ['PRIVY_APP_ID', CONFIG.privyAppId],
+    ['PRIVY_VERIFICATION_KEY', CONFIG.privyVerificationKey],
+  ];
+
   // In static mode, OPENCLAW_OWNER_PRIVY_ID is required.
   // In dynamic mode, VERIFY_OWNER_URL + VERIFY_OWNER_SECRET are required instead.
   if (DYNAMIC_OWNER_MODE) {
@@ -259,6 +264,13 @@ function validateConfig() {
     }
   } else {
     required.push(['OPENCLAW_OWNER_PRIVY_ID', CONFIG.ownerPrivyId]);
+  }
+
+  // CIG requires CIG_CONTAINER_FQDN in production (no Host-header auto-detection)
+  if (CIG_ENABLED && !CIG_CONFIG.containerFqdn) {
+    console.error('❌ CIG enabled but CIG_CONTAINER_FQDN not set — this is required for security.');
+    console.error('   Set CIG_CONTAINER_FQDN to this container\'s public FQDN.');
+    process.exit(1);
   }
 
   const missing = required.filter(([, value]) => !value);
@@ -357,14 +369,23 @@ async function initializeVerificationKey() {
       // PEM-encoded SPKI public key
       verificationKey = await importSPKI(keyMaterial, 'ES256');
     } else {
-      // Assume base64-encoded PEM — decode and import as SPKI
-      const pem = Buffer.from(keyMaterial, 'base64').toString('utf8');
-      if (pem.includes('-----BEGIN PUBLIC KEY-----')) {
-        verificationKey = await importSPKI(pem, 'ES256');
-      } else {
-        throw new Error(
-          'Unrecognized key format. Expected PEM (-----BEGIN PUBLIC KEY-----) or JWK ({...})'
-        );
+      // Raw base64 key body (no PEM headers) — wrap in PEM armor and import.
+      // This handles the case where PRIVY_VERIFICATION_KEY is stored as just the
+      // base64 key material (e.g. "MFkwEwYHKoZIzj0C...") without PEM headers.
+      const wrappedPem = `-----BEGIN PUBLIC KEY-----\n${keyMaterial}\n-----END PUBLIC KEY-----`;
+      try {
+        verificationKey = await importSPKI(wrappedPem, 'ES256');
+      } catch {
+        // Fall back: maybe it's base64-encoded PEM
+        const decoded = Buffer.from(keyMaterial, 'base64').toString('utf8');
+        if (decoded.includes('-----BEGIN PUBLIC KEY-----')) {
+          verificationKey = await importSPKI(decoded, 'ES256');
+        } else {
+          throw new Error(
+            'Unrecognized key format. Expected PEM (-----BEGIN PUBLIC KEY-----), ' +
+            'JWK ({...}), or raw base64 key body'
+          );
+        }
       }
     }
 
@@ -375,7 +396,7 @@ async function initializeVerificationKey() {
   }
 }
 
-async function verifyPrivyJwt(token) {
+async function verifyPrivyJwt(token, reqHost) {
   try {
     const { payload } = await jwtVerify(token, verificationKey, {
       issuer: PRIVY_ISSUER,
@@ -559,16 +580,6 @@ function isModelApiCall(pathname) {
 }
 
 async function handleCigProxy(req, res, session) {
-  // Auto-detect FQDN from Host header if not configured
-  if (!CIG_CONFIG.containerFqdn && !detectedFqdn) {
-    const host = req.headers.host || '';
-    // Strip port if present, normalize to lowercase
-    const fqdn = host.split(':')[0].toLowerCase();
-    if (fqdn && fqdn !== 'localhost' && !fqdn.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      detectedFqdn = fqdn;
-      console.log(`[cig] Auto-detected FQDN from Host header: ${fqdn}`);
-    }
-  }
 
   const cigToken = await mintCigToken();
   if (!cigToken) {
@@ -585,7 +596,9 @@ async function handleCigProxy(req, res, session) {
   }
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const cigUrl = `${CIG_CONFIG.inferenceUrl}${url.pathname}${url.search || ''}`;
+  // Construct CIG URL safely to prevent SSRF via path traversal
+  const cigBase = new URL(CIG_CONFIG.inferenceUrl);
+  const cigUrl = new URL(url.pathname + (url.search || ''), cigBase).toString();
 
   // Collect request body for forwarding.
   const body = await collectBody(req);
@@ -611,6 +624,7 @@ async function handleCigProxy(req, res, session) {
       method: req.method,
       headers: cigHeaders,
       body: req.method !== 'GET' ? body : undefined,
+      signal: AbortSignal.timeout(120_000), // 2min timeout for inference
     });
 
     // Stream the response back.
@@ -626,10 +640,18 @@ async function handleCigProxy(req, res, session) {
 
     if (cigResp.body) {
       const reader = cigResp.body.getReader();
+      const MAX_RESPONSE_BYTES = 50 * 1024 * 1024; // 50 MiB response limit
+      let bytesRead = 0;
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          bytesRead += value.length;
+          if (bytesRead > MAX_RESPONSE_BYTES) {
+            console.error(`[cig] Response exceeded ${MAX_RESPONSE_BYTES} bytes, aborting`);
+            reader.cancel().catch(() => {});
+            break;
+          }
           res.write(value);
         }
       } catch (streamErr) {
@@ -719,7 +741,8 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const result = await verifyPrivyJwt(token);
+      const reqHost = req.headers.host || '';
+      const result = await verifyPrivyJwt(token, reqHost);
 
       if (!result.valid) {
         res.writeHead(result.reason === 'owner_mismatch' ? 403 : 401, {
