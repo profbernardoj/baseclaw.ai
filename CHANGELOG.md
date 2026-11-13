@@ -2,6 +2,370 @@
 
 All notable changes to EverClaw are documented here.
 
+## [2026.11.13.2110] - 2026-11-13 — OpenClaw pin v2026.7.1-2 → v2026.10.9 (security-dep upgrade + fleet blockers)
+
+### Changed — OpenClaw Pin v2026.7.1-2 → v2026.10.9
+
+- **Dockerfile:** OpenClaw build target updated to `v2026.10.9`
+- **docker-compose.yml:** Image tag, OPENCLAW_VERSION arg, and EVERCLAW_VERSION updated
+- **Node base upgraded:** Builder, auth-proxy, and production stages from `node:22.23.4` to `node:24.22.2` (v2026.10.9 engine floor ≥24.22.1)
+- **Bun pinned to v1.4.2:** Latest release assets (v1.4.3/v1.4.4) return 504 from GitHub CDN
+
+### Upstream Highlights (OpenClaw v2026.7.1-2 → v2026.10.9)
+
+#### New Features & Changes
+- **Security:** patched fast-uri (MCP schema validation), Zod collection overflow, nodemailer 10.1.4 IMAP sender-spoofing gate, MSAL Node 7.1.1
+- **Credential hygiene:** live credentials kept out of MCP CLI inspection; Google OAuth secrets masked in logs
+- **SQLite tokenizer recovery:** memory DB integrity after failed updates
+- **Large-transcript migration:** handles oversized session files
+- **Disk-full recovery:** graceful handling on full volumes
+
+#### Fixes
+- **Retired config field:** `gateway.controlUi.allowInsecureAuth` removed upstream — removed from all templates, entrypoint, and setup.mjs
+- **SSO /auth/handoff:** verified end-to-end on staging canary (no v2026.6.8 regression class)
+- **Control-UI 503:** fixed by exporting `OPENCLAUD_BUILD_TIMESTAMP` across build:docker + ui:build (shared identity stamps)
+- **Device pairing wall:** `gateway.auth.trustedProxy.deviceAutoApprove` enabled for IOC users (no shell access)
+- **Exec-approvals migration:** `doctor --fix` runs pre-gateway to import legacy exec-approvals.json to SQLite
+- **Build hardening:** timeout-minutes 90, runner disk free + 8GB swapfile for cold CI builds
+
+### Upstream Reference
+https://github.com/openclaw/openclaw/releases/tag/v2026.10.9
+
+## [2026.10.27.1656] - 2026-10-27 — Fix: auth-proxy login modal follows Privy dashboard methods (login parity)
+
+### Fixed — hardcoded loginMethods drifted from the Privy dashboards (2026-10-27)
+
+- **packages/core/auth-proxy/login-app.jsx:** removed the hardcoded
+  `loginMethods: ['wallet', 'google', 'email', 'apple']` from the PrivyProvider
+  config. The agent login modal now renders the methods enabled on each
+  vertical's Privy app (server-driven) — the same mechanism the main sites use.
+- **Bug class fixed:** config drift between the image and the Privy dashboards.
+  The Apple button rendered but `apple_oauth` is disabled on both apps (dead
+  button), and X/GitHub/Discord were never offered at the agent URL — a user
+  who signed up with those methods on the main site could not sign in to
+  their agent.
+- **test-proxy.mjs:** three drift guards — served bundle has no
+  `loginMethods:[` array literal, SDK server-driven fallback branch present,
+  login-app.jsx source has no hardcoded list. Suite 87/87 (baseline 84/84).
+- Companion: InstallHermes Privy app flags enabled server-side (google,
+  twitter, discord, github, passkey); InstallHermes Lovable frontend list
+  update tracked in the SOP-001 task record.
+
+## [2026.10.23.0148] - 2026-10-23 — Fix: strip unsupported web_search providers at boot (SEC-WAVE fleet incident)
+
+### Fixed — Gateway boot crash on configs referencing unbundled web_search providers (David GO 19:39 CDT)
+
+- **docker-entrypoint.sh:** added a boot-time sanitizer that strips `tools.web.search.provider`
+  unless the provider is bundled in the image (searxng / kimi / firecrawl — the only providers
+  OpenClaw v2026.7.1-2 accepts without an external plugin, verified via `openclaw doctor --lint`).
+- **Root cause:** OpenClaw hard-fails config validation when the provider's plugin is not
+  available (e.g. `parallel-free` from the external `@openclaw/parallel-plugin`, or
+  tavily/exa/perplexity). This crash-looped 2 fleet leases on image 2026.10.21.2345 and
+  reproduced on every restore/upgrade carrying such configs. The gateway now boots with web
+  search unconfigured (the image default) instead of exiting.
+- **Hardening:** extracted shared `repair_json_config()` for atomic config repair; sanitizer
+  is jq 1.6-safe (explicit-root form) and covered by a 17-case regression test that pins the
+  allowlist against the live entrypoint.
+- **Tests:** `tests/entrypoint-websearch-sanitizer.test.mjs` — 17 tests, all passing.
+
+## [2026.10.21.2345] - 2026-10-21 — Fix: ENV EVERCLAW_VERSION literal (runtime banner)
+
+### Fixed — Dockerfile ARG→ENV propagation (canary E2E finding, David GO 23:42 CDT)
+
+- **Dockerfile:331:** `ENV EVERCLAW_VERSION=2026.9.10.2207` was a hardcoded literal instead of
+  `${EVERCLAW_VERSION}` — the CI `--build-arg EVERCLAW_VERSION=…` never propagated to runtime.
+  Effect: every image since the 2026.9.10.2207 release printed "EverClaw v2026.9.10.2207" in the
+  boot banner regardless of the actual image version (2026.10.21.1450 and 2026.10.21.1940 included).
+  Image LABEL `org.opencontainers.image.version` was always correct — only the runtime ENV was stale.
+- **Blast radius (verified):** exactly one consumer — docker-entrypoint.sh:33 banner echo.
+  No functional usage of the variable anywhere in the runtime tree.
+- **Fix:** `ENV EVERCLAW_VERSION=${EVERCLAW_VERSION}` (+ ARG default refreshed to this version).
+  Found by the Stage 3 single-instance canary E2E; missed by both model audits (outside the diff
+  context — lesson recorded).
+- Base image pin unchanged from 2026.10.21.1940: node:22.23.4-bookworm(-slim). No other changes.
+
+## [2026.10.21.1940] - 2026-10-21 — Security: Node.js 22.23.4 base pin (Oct 21 patch wave)
+
+### Security — Node.js runtime patch (David GO 2026-10-21 19:27 CDT)
+
+- **Dockerfile:** pinned `node:22-bookworm` → `node:22.23.4-bookworm` (openclaw-builder)
+  and `node:22-bookworm-slim` → `node:22.23.4-bookworm-slim` (auth-proxy-builder,
+  production). Node.js security release 22.23.4 (2026-10-21) fixes 10 CVEs including
+  the Brotli decoder out-of-bounds write RCE (CVE-2026-111497), DNS NUL truncation
+  (CVE-2026-105482), and TLS certificate hostname bypasses (CVE-2026-105483,
+  CVE-2026-106069). Docker Hub pushed the patched `node:22` images at 14:38 UTC today;
+  the floating tag already resolved to the patched digest (sha256:82693da9…) — the
+  explicit pin makes the security provenance deterministic for this and future builds.
+- **npm audit fix:** ws 8.x HIGH (uninitialized memory disclosure GHSA-58qx-3vcg-4xpx,
+  memory-exhaustion DoS GHSA-96hv-2xvq-fx4p) via viem → ws 8.21.0, viem 2.57.8, ox
+  0.14.56. viem is a devDependency, so shipped images were never exposed; build
+  tooling is patched regardless. Lockfile version field reconciled (was stale at
+  2026.6.1-2.1829).
+- No application-code changes — runtime code is identical to v2026.10.21.1450
+  (Grok 4.20 ×2 + Claude Opus 4.8 ×3 audited today, suite 84/84, PII scan clean).
+
+## [Unreleased] - 2026-10-21
+
+### Added — OpenClaw mascot logo for the auth-proxy login page (img: brand-icon mode)
+
+**InstallOpenClaw.xyz rebrand (David GO 2026-10-21):** the Privy/Fred/Manifest login page
+(served by the auth-proxy inside each container — not the Lovable frontend) now brands
+with real artwork instead of the lobster emoji default.
+
+- `assets/logo.png` (auth-proxy): legacy 500×110 "InstallOpenClaw" wordmark banner →
+  new OpenClaw mascot (480×480 transparent PNG, 64,009 bytes). Served at the existing
+  public `/auth/logo.png` route; the Privy login modal logo (`login-app.jsx`) picks it
+  up too.
+- `server.mjs`: `BRAND_ICON="img:<path>"` convention — renders an `<img>` instead of
+  an escaped text glyph. Detection is trim + case-insensitive; the src must be a strict
+  local image-asset path (leading `/`, not protocol-relative `//` or backslash `/\`,
+  URL path+query charset, path portion ending `.png`/`.svg`/`.webp`) — external URLs,
+  `javascript:`/`data:` URIs, and non-image same-origin GETs all fall back to the
+  escaped-text path. Plain text values (emoji `🦞`, Hermes `☤`) keep the old path
+  unchanged. All five placeholder replacements now use function form (`$&`/`$'`/"$`"
+  sequences in env-set brand values can no longer splice surrounding HTML), and the
+  two Privy-ID placeholders are JS-literal encoded (`JSON.stringify` + `<` → `\u003c`)
+  — env values can never break out of the `<script>` block that feeds the bundled
+  login app.
+- `login.html`: `<title>` now follows `__BRAND_NAME__` (footer stays "Powered by OpenClaw
+  & Privy" as tech attribution, Hermes pattern). `.logo-icon .logo-img` CSS — 64px white
+  app-icon chip, radius 16, object-fit contain.
+- `login-app.jsx`: Privy modal logo now `/auth/logo.png?v=20261021` — one-time cache-bust
+  so returning users (who pinned the old wordmark under the previous `immutable` 7-day
+  header) see the mascot immediately; the logo route drops `immutable` and serves
+  `Cache-Control: public, max-age=86400` so future rebrands need no bust.
+- `test-proxy.mjs`: new test 18 — img-mode renders the `<img>` tag (src/class/alt),
+  title interpolation, no emoji glyph, `/auth/logo.png` serves the exact 64,009-byte
+  mascot with PNG magic bytes and the 1-day cache header; hostile-src guards
+  (`img:javascript:`, `img:https:`, `img:data:`, `img://`, `img:/\`, bare `img:`,
+  `img:/../secret`, `img:*.js`) fall back to escaped text; whitespace-trim and
+  case-insensitive and query-string positives; `$`-bearing brand renders literally
+  (no splice duplication); hostile `PRIVY_APP_ID` values render as inert JS literals
+  (exactly two script blocks, no `</script><script>` breakout). Fixed 7 stale
+  pre-rebrand assertions ('EverClaw'/'Sign in' → 'OpenClaw'/'Sign In'; identical 7
+  failed on baseline). Suite: 84/84.
+
+**Audit trail:** Grok 4.20 (xAI API): R1 Excellent (C=2 S=1 Y=2) → fixes → R2
+Excellent/SHIP (C=0 S=0 Y=2). Claude Opus 4.8 cross-model (Venice): R1 Good — found
+protocol-relative/backslash guard bypass + `$`-replacement injection + immutable-cache
+staleness (all fixed); R2 Good — found Privy-ID raw injection into `<script>` context
+(fixed with JS-literal encoding + template quote removal) + transition cache-bust
+(fixed with `?v=20261021` + no-immutable header); R3 Excellent — VERDICT: SHIP (all
+prior-round blockers resolved, fix code sound, remaining items non-blocking backlog). See
+memory/projects/everclaw/logo-rebrand-2026-10-21/audit/. Stage 6 PII scan: 0 findings.
+CSP header deferred (needs inline-script nonce + Privy domain enumeration + E2E; both
+blocking injection vectors closed) — backlogged.
+
+**Deploy order (matters):** new GHCR image tag lands first (Supabase `OPENCLAW_IMAGE`
+bump), then `BRAND_ICON=img:/auth/logo.png` env flip, then buffer rebuild + container
+upgrades — old image + new env would render the legacy wordmark.
+
+## [Unreleased] - 2026-09-10
+
+### Fixed — migrate-import tar type-field parsing + SOP-001 Stage 5 hardening
+
+**Implementation (re-audited, Claude Opus 4.8: Excellent / 0 blocking):**
+
+- `TAR_TVF_TYPE` regex now tolerates one optional trailing `+` (GNU ACL) or `.` (SELinux) marker after the 9 permission chars in `tar -tvf` listings. GNU tar appends these on systems with ACLs/SELinux; the old regex aborted the whole listing (fail-closed, but broke legitimate GNU-tar exports). The suffix cannot enter the type or perms captures; the field delimiter remains mandatory.
+
+**Test coverage (Grok 4.5 review R1 Flawed → R3 PASS / 0 blocking; suite 33 → 39 tests):**
+
+- Real hostile fixtures replace synthetic checks: workspace tar with symlink member (rejected, nothing extracted); outer bundle with an **allowlisted member name but hostile type** (symlink named `RUNBOOK.md` → `unsafe bundle: member type 'l' not allowed`); hostile outer member names rejected.
+- `unpackBundle`: happy path, out-of-band checksum mismatch, wrong passphrase (generic error, no oracle), missing `checksums` object, **phantom checksum entry** (checksums key for a file absent from the tar → `missing` branch), tampered payload (decrypt → modify → re-encrypt), unsupported schema version.
+- `importMigrateBundle` end-to-end: dry-run writes nothing; happy path restores config/workspaces/skills/runbook; **passphrase gate** (missing or <16 chars refused before any work); **preflight hard block** (existing config + no force → refused, file untouched); **keychain seam** (`keychain.json.enc` → decrypt → `security add-generic-password` with decrypted value + source account, verified via `security` shim); **cron staging** (`pending-cron-import.json` written — primary keeps enablement, worker disables all, L4/L5).
+- Unit coverage added for `preflight`, `restoreConfig`, `restoreKeychain`, `reenableSkills`, `stageCronImport`.
+- Regression gate: baseline == post-change (337/317/20, zero new failures). Stage 6 PII: 0 findings.
+
+## [Unreleased] - 2026-09-08
+
+### Fixed — Stale IDENTITY.md upgrade: EverClaw → resolved agent name (BACK-IOC-012 follow-up)
+
+Warm buffers and containers provisioned from older images kept showing "EverClaw" in the Control UI chat welcome heading even after the first BACK-IOC-012 fix: their persistent volumes already contain an `IDENTITY.md` scaffolded by the old template (whose default was `EverClaw`), and the entrypoint only fixes the default for *fresh* scaffolds. The chat welcome heading reads the agent identity name parsed from this file.
+
+- Entrypoint now runs an idempotent startup upgrade: any `Name:` line whose value is exactly `EverClaw` is rewritten to the resolved `TPL_AGENT_NAME` (same `AGENT_NAME` → `EVERCLAW_AGENT_NAME` → `OpenClaw` priority chain as fresh scaffolding, via the pre-escaped `SED_AGENT_NAME`).
+- Line-anchored exact-value match (`EverClaw[[:space:]]*$`): deliberate custom names like `EverClawBot` or `MyEverClaw` are never mangled. Covers all label forms the IDENTITY.md parser accepts (`**Name:**`, `**Name**:`, `Name:`, `name:`), optional `-`/`*`/`+` bullets, any spacing, and CRLF files (trailing CR preserved, not stripped).
+- Atomic write: upgraded copy goes to a temp file, then `mv` over the original; a mid-write failure under `set -e` leaves the original intact (no zero-byte truncation). `mv` failure is on the failure path (temp cleaned, warning logged).
+- Skipped when the resolved name is itself `EverClaw` (whitespace-tolerant guard) so the rewrite can never re-log on every start.
+- Detection and rewrite EREs are structurally identical (no match-without-rewrite divergence); both pinned to `LC_ALL=C`.
+
+## [Unreleased] - 2026-09-07
+
+### Fixed — Default agent name "OpenClaw" + AGENT_NAME env wiring (BACK-IOC-012)
+
+Deployed InstallOpenClaw containers showed "EverClaw" as the agent heading in the chat UI. The entrypoint only read `EVERCLAW_AGENT_NAME` (defaulting to "EverClaw") while provisioning functions set `AGENT_NAME` — so custom agent names never applied and the image-brand default leaked into the UI.
+
+- Entrypoint now resolves: `AGENT_NAME` (provisioner) → `EVERCLAW_AGENT_NAME` (legacy alias) → default `OpenClaw`.
+- Fail-closed sanitization mirrors `sanitize-agent-name.ts` (ASCII allowlist `^[a-zA-Z0-9 _-]+$` under `LC_ALL=C`, newline/CR strip, 50-char cap, whitespace-only rejection).
+- Sed replacement metacharacters (`&`, `\`) escaped before `__AGENT_NAME__` substitution into boot templates.
+- Dockerfile env docs updated (`AGENT_NAME` primary, `EVERCLAW_AGENT_NAME` legacy alias).
+
+## [Unreleased] - 2026-09-04
+
+### Added — Download Agent v2 (Egress-Proof Pull Path): Container → Edge Function → signed URL
+
+Replaces the push-path (container → Supabase) with a pull-path that works regardless of container egress policy. The Supabase Edge Functions gateway hangs on request bodies >= ~1 MB, blocking the old push path. The pull path reverses the direction: Edge Function fetches the bundle from the container via a single-use token, then uploads to Storage.
+
+**New auth-proxy routes:**
+
+- **`GET /internal/diag` (binding secret):** Bounded egress diagnostics — 8 probes (DNS, TCP, HTTP GET/POST, large POST, Storage PUT, control host, export size probe). Results cached 5 min. Read-only, no side effects.
+- **`POST /internal/export/start` (binding secret):** Runs `migrate-export.mjs --agentic` (no upload). Returns `{ bundleToken, sizeBytes, passphrase, expiresAt }`. Single-use token (randomUUID, 24-byte hex), 10-min TTL (env-configable `BUNDLE_TOKEN_TTL_MS`), stored in-memory Map. 409 on concurrent export (in-flight guard). 120s timeout + `SIGKILL` + tree-kill on process group + 5s safety net (`unref`'d). Passphrase never written to disk/logs.
+- **`GET /internal/export/bundle?token=` (binding secret):** Streams encrypted bundle (`createReadStream`, `Content-Length`, `octet-stream`). Single-use token consumed before streaming. 410 on expiry, 404 on bogus/replayed token. File deleted on ALL paths (success, error, client disconnect, timeout). Proxy-owned path only — child-reported `outputPath` must match or 500.
+
+**Edge Function changes (InstallOpenClaw):**
+
+- **`agent-export` (modified):** Pull orchestration — calls `/internal/export/start` → streams bundle from `/internal/export/bundle` → uploads to Storage → creates 1h signed URL → returns `{ download_url, passphrase, expires_at }`. Retry budget: 3 attempts within the Edge Function timeout.
+- **`agent-export-upload` (unchanged):** 100 MB cap, `.tar.gz.enc` suffix + min-1KB validation, private `agent-exports` bucket, 1h signed URL.
+- **`test-agent-export-cap.test.ts` (new):** 6 Deno tests for the 100 MB bundle cap (over-cap 413, at-cap, under-cap, <1KB 400, wrong-suffix 400, constant verified).
+
+**auth-proxy hardening (Grok R6 + Claude R3 audited):**
+
+- `egress-probes.mjs` (new): 8 bounded probes with deps injection for hermetic unit tests. Fixed targets (no SSRF). DNS, TCP, HTTP GET/POST/PUT, export size probe.
+- `migrate-export.mjs`: `--diag-size-probe` subcommand, `--agentic` JSON contract, upload retry with backoff, phase-trace instrumentation.
+- `staging-verify.sh`: Test 18 egress probe (`/internal/diag` artifact), 16/16 PASS.
+- Process-group kill (`killExportTree`): `detached: true` + `process.kill(-pid, 'SIGKILL')` for tar grandchild. In-callback tree-kill (not external timer). All 12 `unlink` sites use `.catch` (`fs/promises` ignores callbacks).
+- `BUNDLE_TOKEN_TTL_MS` env-configable (default 10 min). Background expiry sweep every 60s + startup stale-bundle sweep.
+
+**Tests (25 automated + 6 Deno):**
+
+- `test-export-v2.mjs`: 25 tests — auth (401, timingSafeEqual 4 cases), token lifecycle (200, 404 replay, 404 bogus, 400 missing, 409 concurrent, 410 TTL expiry), streaming (exact bytes, decrypt round-trip), cleanup (abort-mid-stream, spawn-failure guard, timeout ceiling), egress-probes (5 unit tests with deps injection, real-network smoke), size equality (probe == start == actual bytes).
+- `test-agent-export-cap.test.ts`: 6 Deno tests for cap enforcement.
+
+**Audit trail:**
+
+- Grok 4.20 code audit: R6 Excellent (0 blocking). 20 commits.
+- Claude Opus 4.8 cross-model: R3 Excellent (0 Correctness / 0 Security). 10 fixes (C1-C10).
+- Grok 4.20 coverage review: R3 Excellent (0 blocking, 0 major, 2 minor). 7 findings closed across R1-R3.
+- PII Guard V2: 0 findings across 13 files.
+
+### Added — Download Agent (Phase 2 Direct, superseded by v2)
+
+- **auth-proxy `/internal/export` route (new):** Trigger agent export from the Lovable Dashboard without an LLM in the loop. Binding-secret auth (timing-safe `timingSafeEqual` + length pre-check), `execFile` child (no shell) running `migrate-export.mjs --agentic --upload --callback-url`, 120s timeout + `SIGKILL` + independent +5s safety net (`unref`'d), randomized `/tmp` output path, `unlink` on every path (including safety net), 10 MB stdout `maxBuffer`, stderr swallowed unless `AGENT_EXPORT_DEBUG=1`, fail-closed guards for missing `expires_at` / missing `passphrase`.
+- **`agent-export` Edge Function (new, InstallOpenClaw):** Privy JWT verification, scoped to the caller's single active deployment; calls container `/internal/export` with `x-binding-secret`; strictly validates the returned download URL (Supabase hostname + per-user path prefix + token); returns `{ download_url, passphrase, expires_at }` to the Dashboard. Passphrase is NEVER persisted.
+- **`agent-export-upload` Edge Function (new):** Container upload auth via `deployments.binding_secret` DB lookup (UNIQUE constraint); 100 MB cap, `.tar.gz.enc` suffix + min-1KB validation; private `agent-exports` bucket; 1-hour signed URL (`SIGNED_URL_TTL_SECONDS = 3600` — single canonical TTL).
+- **`20260902_agent_exports.sql` migration (new):** private storage bucket, service_role-only policy, `binding_secret` partial index + UNIQUE constraint (duplicate-resolution guarded by constraint-exists check so re-runs are no-ops).
+- **`migrate-export.mjs`:** `--agentic` non-interactive JSON contract + `--upload` FormData/Blob upload (Node 22 globals with `undici` fallback); `OPENCLAW_BINDING_SECRET` from env only (never argv); bundle kept on disk unless upload actually succeeded.
+- **docker-entrypoint.sh:** exports `AGENT_EXPORT_UPLOAD_URL` (defaults to production Supabase endpoint) for the auth-proxy when the export route is used.
+- **New test:** `supabase/scripts/test-download-url.mjs` (8 assertions — DID `did:privy:` colon path-prefix lock, IDOR, traversal, token/host checks).
+- **Audit:** Grok 4.20 R7 Excellent + Claude Opus 4.8 C3 Excellent (0 Correctness / 0 Security / 0 Style). PII Guard clean.
+
+## [2026.8.20.0917] - 2026-08-20
+
+### Changed — Docker bind-mount fixes + Tool Calling Rule promotion
+
+- Fix: `mkdir workspace` before template scaffold (empty bind-mount crash).
+- Fix: ship boot templates + skill OUTSIDE the persistent volume (Barney bind-mount shadow).
+- Fix: ship templates/boot into the image so entrypoint scaffolds AGENTS/SOUL.
+- Add: Tool Calling Rule to AGENTS + SOUL boot templates (buffer pool instances).
+- OpenClaw pinned at v2026.7.1-2 (unchanged). Docker base image Node 22 (bookworm).
+- Promoted from staging (production E2E verified) to main → `:latest`.
+
+## [2026.8.12.2040] - 2026-08-12
+
+### Changed — OpenClaw Pin v2026.5.27 → v2026.7.1-2
+
+- **Dockerfile:** OpenClaw build target updated to `v2026.7.1-2`; replaced stale SSO blocker pin comment with a promotion note (SSO `/auth/handoff` verified end-to-end on the staging image 2026-08-12). `EVERCLAW_VERSION` default aligned to `2026.8.12.2040`.
+- **docker-compose.yml:** Image tag and `OPENCLAW_VERSION`/`EVERCLAW_VERSION` build args updated.
+- **package.json:** Version bump to `2026.8.12.2040`.
+- **VERSION:** Updated to `v2026.8.12.2040`.
+- **SKILL.md (root):** Version frontmatter, section headers, diagnostics JSON, and changelog updated.
+- **packages/core/version.json:** Version/buildDate updated.
+- **CHANGELOG.md:** New entry.
+
+### Upstream Highlights (OpenClaw v2026.7.1-2)
+
+#### Fixes
+- **npm plugin updates:** Accept singleton-array metadata from newer npm clients so tracked official plugins can install and update to correction releases. ([#108336](https://github.com/openclaw/openclaw/pull/108336))
+
+(Reference: https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2)
+
+---
+
+## [Unreleased] - 2026-07-26
+
+### Added — KAT-Coder RL Reward Patterns library (OSSAI-016)
+
+- **scripts/lib/rewards.mjs (new):** Deterministic reward-signal reference library from the
+  Kwaipilot KAT-Coder-V2.5-Dev RL post-mortem (69.4% SWE-bench Verified). Implements the four
+  penalty signals + hierarchical credit that prevented agentic collapse under binary rewards:
+  `parallelToolCallPenalty` (leading indicator, highest default weight 0.70), `failedToolCallPenalty`,
+  `emptyToolBlockPenalty`, `repetitionPenalty`, `hierarchicalCredit`, and a `scoreTrajectory` composer
+  that folds them into a single reward in [-1,1] with an inspectable per-component breakdown.
+  Pure functions, zero runtime deps, additive/opt-in — for OpenClaw agent-behavior analysis / future
+  agentic RL. No existing behavior changed.
+- **tests/rewards.mjs (new):** 29 unit tests, all passing (NaN/negative-input hardening, weight
+  overrides, reward-inversion guard, hierarchical-credit bound).
+
+### Added — Manifest Retention Partitioning
+
+- **docker-compose.yml:** Added `morpheus-openclaw` label to the `everclaw` service for Manifest platform retention partitioning. Each customer gets their own guaranteed restore quota for soft-deleted leases (5 most-recent closed leases per customer). Defaults to a per-installation hostname-derived ID (`${HOSTNAME:-everclaw}`) so no config is required and no breakage occurs on existing deployments; override `MORPHEUS_OPENCLAW_LABEL` with a stable per-customer ID (A-Z a-z 0-9 . _ -, 1-64 chars) for explicit control.
+
+### Fixed
+
+- **docker-compose.yml:** Fixed invalid service name `everclaw:2026.7.11.0248` → `everclaw` (colon is invalid in YAML/docker-compose service names, introduced in v2026.7.11.0248).
+
+## [Unreleased] - 2026-07-17
+
+### Added — Full Container Capability Upgrade
+
+- **Dockerfile:** Merged all packages from `Dockerfile.optimized` into the production Dockerfile. InstallOpenClaw.xyz containers now ship with a complete toolset:
+  - **python3 + pip** — Python execution for agents (allowlisted in security tier)
+  - **zip + unzip** — Archive operations (allowlisted in security tier)
+  - **ffmpeg** — Audio/video processing (voice notes, video frames skill)
+  - **gnupg** — GPG key management (required for Adoptium Java repo)
+  - **Java 21 (Temurin JRE)** — Runtime for signal-cli
+  - **signal-cli v0.14.5** — Signal messaging (SHA256 checksum verified)
+  - **GitHub CLI (gh)** — Git platform operations (allowlisted in security tier)
+  - **Brave Browser** — Headless browser automation (OpenClaw browser tool)
+  - **openai-whisper** — Speech-to-text (CPU-only torch, model downloads on demand)
+- **scripts/docker-entrypoint.sh:** Default security tier changed from `recommended` to `low`. All 54 exec-allowlisted binaries (ls, cat, grep, node, python3, git, curl, etc.) now run without approval prompts. Money operations remain gated at the application layer (everclaw-wallet.mjs) regardless of tier.
+
+### Changed
+
+- **Dockerfile:** `EVERCLAW_SECURITY_TIER` default updated from `recommended` to `low` with warning comments.
+- **scripts/docker-entrypoint.sh:** `SECURITY_TIER` default updated from `recommended` to `low` with explanatory comments.
+
+## [2026.7.11.0248] - 2026-07-11
+
+### Changed — GLM-5.2 Default + Bootstrap Reset Hardening
+
+- **scripts/docker-entrypoint.sh:** Updated fallback default model from `glm-5.1` to `glm-5.2`. This aligns the Docker image default with the Free tier configuration in `provision-buffer` (`EVERCLAW_DEFAULT_MODEL=glm-5.2`). The env var override still takes precedence; this only affects containers without the env var set.
+- **scripts/docker-entrypoint.sh:** Hardened bootstrap session reset from a one-shot `sleep 20` to a polling loop (3 iterations × 20s = 60s). Fixes race condition where Morpheus P2P inference failures that arrive after the 20s window left "assistant turn failed" errors visible to users.
+  - Added `OPENCLAW_OWNER_PRIVY_ID` guard: only runs on unclaimed buffer containers (`buffer-unassigned`), preventing accidental session wipes during Manifest node migrations on claimed containers.
+  - Added `command -v` guards for `jq` and `node` with diagnostic output instead of silent failure.
+  - Fixed JSON injection risk: session keys now passed via `jq -nc --arg` instead of string interpolation.
+  - Added `|| true` pipeline guard for `set -e` compatibility.
+
+## [2026.6.26.2131] - 2026-06-26
+
+### Fixed — Reset Dashboard Session (not main)
+
+- **scripts/docker-entrypoint.sh:** Fixed the bootstrap session reset to target the correct session key. The Control UI uses `agent:main:dashboard:<uuid>` session keys, not `agent:main:main`. The previous fix reset `main` which had no effect on the UI. Now the script lists all sessions, finds dashboard session keys, and resets each one.
+
+## [2026.6.26.2008] - 2026-06-26
+
+### Fixed — Simplified Bootstrap Session Reset
+
+- **scripts/docker-entrypoint.sh:** Simplified the Bootstrap Session Reset from 73 lines of conditional query+grep+reset logic to a straightforward unconditional reset. The previous approach silently failed when the `sessions.get` query didn't find the error string (e.g., auth issues, wrong port, timeout), leaving the broken session visible to users. The new approach: wait 20s after gateway health, then unconditionally call `sessions.reset` with `reason:"new"`. Buffer pool containers sit warm for minutes before being claimed, so there is no user content to destroy. Removed the `sessions.get` query, grep conditional, named constants, and if/elif/else branching.
+
+## [2026.6.26.0606] - 2026-06-26
+
+### Fixed — Bootstrap Session Reset for InstallOpenClaw.xyz Cold Start
+
+- **scripts/docker-entrypoint.sh:** Added Bootstrap Session Reset block. After the gateway becomes healthy, a background process waits 20s for the initial bootstrap agent turn to complete, queries `sessions.get` to check if the main session has the "assistant turn failed before producing content" error, and if detected, calls `sessions.reset` with `reason:"new"` to clear the failed session. This gives users a fresh, clean session when they first open the Control UI instead of seeing a broken error message. The reset is conditional — if the bootstrap succeeded or the user already started chatting, the reset is skipped. Handles both legacy token auth (port 18789) and Privy trusted-proxy mode (port 18790).
+
+## [2026.6.23.1642] - 2026-06-23
+
+### Added — GLM-5.2 for Free Tier
+
+- **config/openclaw-default.json:** Added `glm-5.2` model to both `mor-gateway` and `morpheus-local` providers with `reasoning: false` and `streaming: true`. Free tier users can now select GLM-5.2 as an alternative to DeepSeek V4 Flash. Default model remains `deepseek-v4-flash` (set by `provision-buffer` `EVERCLAW_DEFAULT_MODEL` env var).
+- **supabase/functions/cig-inference/index.ts:** Added `glm-5.2` (and all prefixed variants) to `RESERVE_ESTIMATES_USD` with $0.005 per-request reserve estimate (same tier as GLM-5.1).
+- **supabase/migrations/20260623_add_glm52_free_tier.sql:** Updated `check_and_charge_usage()` free tier allowlist to include `glm-5.2` and all prefix variants (`morpheus/glm-5.2`, `mor-gateway/glm-5.2`, `morpheus-local/glm-5.2`). Added `insert_usage_log()` RPC function for idempotent usage log writes. Added `model_prices` entries for all four name variants.
+
+### Fixed — "assistant turn failed" Regression
+
+- **supabase/migrations/20260623_add_glm52_free_tier.sql:** Fixed critical parameter name typo in `check_and_charge_usage()` — `v_cost_usd` was used in 5 places instead of `p_cost_usd`, causing SQL error `column "v_cost_usd" does not exist` on ALL inference calls. The function body has been restored to the proven June 22 version with only the GLM-5.2 allowlist addition.
+- **supabase/functions/cig-inference/index.ts:** Added `daily_limit_exceeded` to the error reason mapping (maps to 429 `daily_limit_or_credits_exhausted`). Previously only `insufficient_credits` was mapped, causing `daily_limit_exceeded` to fall through as a raw 403.
+
 ## [2026.6.18.2357] - 2026-06-18
 
 ### Bug Fixes — Revert OpenClaw Pin + CIG Model Prefix
@@ -36,6 +400,56 @@ All notable changes to EverClaw are documented here.
 - FQDN binding prevents token reuse across containers
 - Defense-in-depth: `verify-owner` call on success path
 - POST body delivery (not URL query param) prevents token leakage in browser history/referer
+
+## [2026.6.16.2136] - 2026-06-16
+
+### Added
+
+- **Tiered Installer** (`scripts/install-tiered.sh`): New unified installer with three tiers:
+  - **Minimal** (default): Core deps only — Node.js 24.x LTS, jq, git, curl, Morpheus proxy (~200MB)
+  - **Standard** (`--standard`): + Ollama/Gemma 4 12B, Signal, ffmpeg (~8.6GB)
+  - **Full** (`--full`): + Brave, Whisper, Gemma 4 26B, GitHub CLI, all channels (~19.6GB)
+  - **Custom** (`--with X,Y,Z`): Pick specific components
+  - Supports `--dry-run` to preview without installing and `--list` to show available components
+
+- **Component Libraries** (`scripts/lib/`):
+  - `install-core.sh` — Node.js, jq, git, curl with Homebrew/apt/dnf/pacman support
+  - `install-ollama.sh` — Ollama engine + model downloads (Gemma 4 12B, Gemma 4 26B)
+  - `install-signal.sh` — signal-cli with Java 21, version checking (≥0.14.3 required)
+  - `install-media.sh` — ffmpeg, Whisper (mlx-whisper on Apple Silicon), yt-dlp
+  - `install-browser.sh` — Brave Browser for web automation
+  - `install-channels.sh` — Setup instructions for Telegram, Discord, Slack, Matrix
+  - `install-dev.sh` — GitHub CLI for repository and issue management
+  - `install-utils.sh` — Logging, platform detection, size estimation
+
+- **Docker Optimized Image** (`everclaw-docker/Dockerfile.optimized`):
+  - Multi-stage build for smaller image size (~900 MB total)
+  - Node 20-slim base (avoids Node.js v25 SSE bugs)
+  - Includes: signal-cli 0.14.5 + Java 21, GitHub CLI, Brave Browser, Whisper, ffmpeg
+  - Pre-configured for containerized operation (bind 0.0.0.0, Morpheus provider)
+  - Non-root user for security
+  - Health check endpoint
+  - No Ollama/local models (uses Morpheus P2P for inference)
+
+- **Signal Troubleshooting Docs** (`docs/docs/operations/signal-troubleshooting.md`):
+  - signal-cli ≥0.14.3 requirement documented
+  - Node.js v25 SSE bug warning and workarounds
+  - Common issues: inbound not working, NullPointerException, SSE drops
+  - Verification commands and container mode alternative
+
+### Security
+
+- signal-cli Linux installer now uses jq for safe JSON parsing (with grep/sed fallback)
+- Added file type validation before extracting downloaded archives
+- Graceful process termination (SIGTERM before SIGKILL) in troubleshooting docs
+
+### Fixed
+
+- Pure bash `format_size()` implementation (no bc dependency)
+- Component name trimming for `--with` flag (handles spaces)
+- Proxy installation error handling with proper exit code capture
+
+---
 
 ## [2026.5.28.1854] - 2026-05-28
 
